@@ -36,7 +36,7 @@ def load_rides() -> pd.DataFrame:
         raw = json.load(f)
 
     df = pd.DataFrame(raw)
-    df["date"]          = pd.to_datetime(df["date"])
+    df["date"]          = pd.to_datetime(df["date"], format="mixed", utc=True).dt.tz_localize(None)
     df["week"]          = df["date"].dt.to_period("W").apply(lambda r: r.start_time)
     df["month"]         = df["date"].dt.to_period("M").apply(lambda r: r.start_time)
     df["year"]          = df["date"].dt.year
@@ -48,6 +48,19 @@ def load_rides() -> pd.DataFrame:
                 "elevation_m", "distance_km"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # ── Data quality filters ──
+    # Drop junk rides (accidental starts, corrupt GPS)
+    df = df[df["distance_km"] >= 1.0]
+    df = df[df["moving_time_s"] >= 300]  # at least 5 minutes
+
+    # Null out implausible values rather than dropping entire rides
+    df.loc[df["avg_speed_kmh"] > 55, "avg_speed_kmh"] = None      # impossible avg
+    df.loc[df["avg_watts"] > 600, "avg_watts"] = None              # impossible avg power
+    df.loc[df["max_watts"] > 2500, "max_watts"] = None
+    df.loc[df["avg_hr"] < 50, "avg_hr"] = None                    # sensor glitch
+    df.loc[df["avg_hr"] > 220, "avg_hr"] = None
+    df.loc[df["max_hr"] > 230, "max_hr"] = None
 
     return df.sort_values("date").reset_index(drop=True)
 
@@ -405,6 +418,110 @@ def chart_year_comparison(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def table_fitness_trend(df: pd.DataFrame):
+    """Rolling 90-day fitness trend table with direction arrows."""
+    import numpy as np
+
+    now = df["date"].max()
+    rows = []
+    prev_eff = None
+
+    # Build quarters from most recent backwards
+    quarters = []
+    for i in range(6):
+        end = now - pd.Timedelta(days=90 * i)
+        start = end - pd.Timedelta(days=90)
+        chunk = df[(df["date"] >= start) & (df["date"] < end)]
+        if chunk.empty:
+            continue
+        quarters.append((start, end, chunk))
+
+    # Reverse so oldest is first (arrows compare to previous)
+    quarters.reverse()
+
+    for start, end, chunk in quarters:
+        hr_chunk = chunk.dropna(subset=["avg_hr", "avg_speed_kmh"])
+        rides = len(chunk)
+        total_km = chunk["distance_km"].sum()
+        avg_dist = chunk["distance_km"].mean()
+        avg_speed = chunk["avg_speed_kmh"].mean()
+        avg_hr = hr_chunk["avg_hr"].mean() if not hr_chunk.empty else np.nan
+        efficiency = (hr_chunk["avg_speed_kmh"] / hr_chunk["avg_hr"]).mean() if not hr_chunk.empty else np.nan
+        total_elev = chunk["elevation_m"].sum()
+
+        # Direction arrows vs previous quarter
+        if prev_eff is not None and not np.isnan(efficiency) and not np.isnan(prev_eff):
+            delta = efficiency - prev_eff
+            if delta > 0.003:
+                trend = "▲"
+            elif delta < -0.003:
+                trend = "▼"
+            else:
+                trend = "―"
+        else:
+            trend = ""
+        prev_eff = efficiency
+
+        period_label = f"{start.strftime('%b %Y')} – {end.strftime('%b %Y')}"
+        rows.append({
+            "Period":         period_label,
+            "Rides":          str(rides),
+            "Distance":       f"{total_km:,.0f} km",
+            "Avg Dist":       f"{avg_dist:.0f} km",
+            "Avg Speed":      f"{avg_speed:.1f} km/h",
+            "Avg HR":         f"{avg_hr:.0f}" if not np.isnan(avg_hr) else "—",
+            "Efficiency":     f"{efficiency:.3f}" if not np.isnan(efficiency) else "—",
+            "Trend":          trend,
+            "Climbing":       f"{total_elev:,.0f} m",
+        })
+
+    if not rows:
+        return html.P("Not enough data for fitness trend.", style={"color": MUTED})
+
+    rdf = pd.DataFrame(rows)
+    cols = list(rdf.columns)
+
+    # Color the trend column
+    trend_colors = []
+    for t in rdf["Trend"]:
+        if t == "▲":
+            trend_colors.append(GREEN)
+        elif t == "▼":
+            trend_colors.append(PINK)
+        else:
+            trend_colors.append(MUTED)
+
+    # Build cell colors — each column gets a list of colors per row
+    cell_colors = []
+    for c in cols:
+        if c == "Trend":
+            cell_colors.append(trend_colors)
+        else:
+            cell_colors.append([TEXT] * len(rdf))
+
+    fig = go.Figure(data=[go.Table(
+        columnwidth=[170, 50, 90, 75, 85, 65, 80, 50, 95],
+        header=dict(
+            values=cols,
+            fill_color=BORDER,
+            font=dict(color=ORANGE, size=11, family=MONO),
+            align="left", height=30,
+        ),
+        cells=dict(
+            values=[rdf[c] for c in cols],
+            fill_color=CARD,
+            font=dict(color=cell_colors, size=11, family=MONO),
+            align="left", height=26,
+        ),
+    )])
+    fig.update_layout(
+        paper_bgcolor=CARD,
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=len(rows) * 26 + 40,
+    )
+    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
 def table_personal_bests(df: pd.DataFrame):
     records = []
     categories = [
@@ -491,6 +608,9 @@ def apply_filter(time_range: str) -> pd.DataFrame:
         "3m":   now - pd.Timedelta(days=90),
         "6m":   now - pd.Timedelta(days=180),
         "12m":  now - pd.Timedelta(days=365),
+        "2y":   now - pd.Timedelta(days=730),
+        "3y":   now - pd.Timedelta(days=1095),
+        "5y":   now - pd.Timedelta(days=1825),
         "year": pd.Timestamp(now.year, 1, 1),
     }
     if time_range in cutoffs:
@@ -537,6 +657,9 @@ def build_layout():
                         {"label": "Last 3 months",   "value": "3m"},
                         {"label": "Last 6 months",   "value": "6m"},
                         {"label": "Last 12 months",  "value": "12m"},
+                        {"label": "Last 2 years",    "value": "2y"},
+                        {"label": "Last 3 years",    "value": "3y"},
+                        {"label": "Last 5 years",    "value": "5y"},
                     ],
                     value="all",
                     clearable=False,
@@ -634,6 +757,13 @@ def update_all(time_range: str):
             card_wrap(section_head("Annual Volume Heatmap"),
                       graph(chart_heatmap(df)),
                       extra={"flex": "2", "minWidth": "600px"}),
+        ),
+        card_wrap(
+            section_head("Fitness Trend"),
+            html.P("90-day rolling windows · Efficiency = avg speed ÷ avg HR · Higher = fitter",
+                    style={"color": MUTED, "fontSize": "10px", "fontFamily": MONO, "margin": "0 0 10px 0"}),
+            table_fitness_trend(df),
+            extra={"marginBottom": "14px"},
         ),
         card_wrap(
             section_head("Personal Bests"),

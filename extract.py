@@ -235,33 +235,9 @@ def fetch_strava_activities(token: str) -> List[dict]:
     return all_activities
 
 
-def fetch_strava_details(token: str, activity_id: int) -> Optional[dict]:
-    """Fetch full details for a single activity (includes suffer_score, calories, max_watts)."""
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        r = requests.get(
-            f"{STRAVA_API_BASE}/activities/{activity_id}",
-            headers=headers,
-        )
-        if r.status_code == 429:
-            # Rate limited — wait and retry once
-            retry_after = int(r.headers.get("Retry-After", 60))
-            print(f"    Rate limited, waiting {retry_after}s...")
-            time.sleep(retry_after)
-            r = requests.get(
-                f"{STRAVA_API_BASE}/activities/{activity_id}",
-                headers=headers,
-            )
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        print(f"    Failed to fetch details for {activity_id}: {e}")
-        return None
-
-
-def map_strava_ride(activity: dict, details: Optional[dict] = None) -> dict:
-    """Map a Strava activity to our common schema."""
-    d = details or {}
+def map_strava_ride(activity: dict) -> dict:
+    """Map a Strava activity to our common schema.
+    Uses list-endpoint data only (no per-ride detail call needed)."""
     return {
         "id":             f"strava_{activity['id']}",
         "source":         "strava",
@@ -273,13 +249,13 @@ def map_strava_ride(activity: dict, details: Optional[dict] = None) -> dict:
         "elapsed_time_s": activity.get("elapsed_time", 0),
         "avg_speed_kmh":  round(activity.get("average_speed", 0) * 3.6, 2),
         "max_speed_kmh":  round(activity.get("max_speed", 0) * 3.6, 2),
-        "avg_hr":         activity.get("average_heartrate") or d.get("average_heartrate"),
-        "max_hr":         activity.get("max_heartrate") or d.get("max_heartrate"),
-        "avg_watts":      activity.get("average_watts") or d.get("average_watts"),
-        "max_watts":      d.get("max_watts") or activity.get("max_watts"),
-        "avg_cadence":    activity.get("average_cadence") or d.get("average_cadence"),
-        "suffer_score":   d.get("suffer_score") or activity.get("suffer_score"),
-        "calories":       d.get("calories") or activity.get("calories"),
+        "avg_hr":         activity.get("average_heartrate"),
+        "max_hr":         activity.get("max_heartrate"),
+        "avg_watts":      activity.get("average_watts"),
+        "max_watts":      activity.get("max_watts"),
+        "avg_cadence":    activity.get("average_cadence"),
+        "suffer_score":   activity.get("suffer_score"),
+        "calories":       None,  # only in detail endpoint
         "gear":           activity.get("gear", {}).get("name") if isinstance(activity.get("gear"), dict) else None,
         "activity_type":  activity.get("type", "Ride"),
     }
@@ -465,15 +441,8 @@ def main():
             cycling = [a for a in activities if a.get("type") in ("Ride", "VirtualRide")]
             print(f"  {len(cycling)} cycling rides found.")
 
-            # Fetch details for suffer_score / calories / max_watts
-            print(f"  Fetching detailed metrics for each ride...")
-            for i, act in enumerate(cycling):
-                if (i + 1) % 25 == 0 or i == 0:
-                    print(f"    {i + 1}/{len(cycling)}...")
-                details = fetch_strava_details(token, act["id"])
-                ride = map_strava_ride(act, details)
-                all_rides.append(ride)
-                time.sleep(0.4)  # ~100 requests per 15 min limit
+            for act in cycling:
+                all_rides.append(map_strava_ride(act))
             print(f"  Mapped {len(cycling)} Strava rides.")
         else:
             print("  Strava authentication failed.")
