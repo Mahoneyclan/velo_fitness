@@ -1,0 +1,5 @@
+requests>=2.31.0
+garminconnect>=0.2.8
+dash>=2.14.0
+plotly>=5.18.0
+pandas>=2.0.0

@@ -1,0 +1,659 @@
+#!/usr/bin/env python3
+"""
+dashboard.py
+────────────
+Interactive cycling fitness dashboard.
+Reads rides.json produced by extract.py.
+
+Usage:
+    python dashboard.py
+    Then open  http://127.0.0.1:8050  in your browser.
+"""
+
+import json
+from pathlib import Path
+
+import dash
+from dash import dcc, html, Input, Output
+import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Load & prepare data
+# ─────────────────────────────────────────────────────────────────────────────
+
+DATA_FILE = Path(__file__).parent / "rides.json"
+
+
+def load_rides() -> pd.DataFrame:
+    if not DATA_FILE.exists():
+        print(f"ERROR: {DATA_FILE} not found.")
+        print("  Run  python extract.py  first.")
+        return pd.DataFrame()
+
+    with open(DATA_FILE) as f:
+        raw = json.load(f)
+
+    df = pd.DataFrame(raw)
+    df["date"]          = pd.to_datetime(df["date"])
+    df["week"]          = df["date"].dt.to_period("W").apply(lambda r: r.start_time)
+    df["month"]         = df["date"].dt.to_period("M").apply(lambda r: r.start_time)
+    df["year"]          = df["date"].dt.year
+    df["moving_time_h"] = df["moving_time_s"] / 3600
+
+    # Ensure numeric columns that may be None
+    for col in ["avg_hr", "max_hr", "avg_watts", "max_watts",
+                "avg_cadence", "suffer_score", "calories", "avg_speed_kmh",
+                "elevation_m", "distance_km"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df.sort_values("date").reset_index(drop=True)
+
+
+DF = load_rides()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Design tokens
+# ─────────────────────────────────────────────────────────────────────────────
+
+DARK   = "#0d1117"
+CARD   = "#161b22"
+BORDER = "#30363d"
+ORANGE = "#f97316"
+TEAL   = "#22d3ee"
+GREEN  = "#4ade80"
+PURPLE = "#a78bfa"
+PINK   = "#f472b6"
+AMBER  = "#fbbf24"
+MUTED  = "#8b949e"
+TEXT   = "#e6edf3"
+MONO   = "'IBM Plex Mono', 'Courier New', monospace"
+DISPLAY = "'Bebas Neue', Impact, sans-serif"
+
+BASE_LAYOUT = dict(
+    paper_bgcolor=CARD,
+    plot_bgcolor=CARD,
+    font=dict(color=TEXT, family=MONO, size=11),
+    margin=dict(l=48, r=24, t=48, b=40),
+    xaxis=dict(gridcolor=BORDER, zeroline=False, tickfont=dict(size=10)),
+    yaxis=dict(gridcolor=BORDER, zeroline=False, tickfont=dict(size=10)),
+    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=BORDER, font=dict(size=10)),
+    hovermode="x unified",
+    hoverlabel=dict(bgcolor=CARD, font_color=TEXT, bordercolor=BORDER),
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper components
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fmt_time(hours: float) -> str:
+    h = int(hours)
+    m = int((hours - h) * 60)
+    return f"{h}h {m:02d}m"
+
+
+def stat_card(title: str, value: str, sub: str = "", color: str = ORANGE):
+    return html.Div([
+        html.P(title, style={
+            "color": MUTED, "fontSize": "10px", "letterSpacing": "0.15em",
+            "textTransform": "uppercase", "margin": "0 0 6px 0", "fontFamily": MONO,
+        }),
+        html.Div(value, style={
+            "color": color, "fontSize": "1.9rem", "fontFamily": DISPLAY,
+            "letterSpacing": "0.04em", "lineHeight": "1",
+        }),
+        html.P(sub, style={
+            "color": MUTED, "fontSize": "10px", "margin": "6px 0 0 0", "fontFamily": MONO,
+        }),
+    ], style={
+        "backgroundColor": CARD,
+        "border": f"1px solid {BORDER}",
+        "borderTop": f"3px solid {color}",
+        "borderRadius": "6px",
+        "padding": "18px 20px",
+        "flex": "1",
+        "minWidth": "150px",
+    })
+
+
+def section_head(text: str):
+    return html.P(text, style={
+        "color": ORANGE, "fontFamily": DISPLAY, "fontSize": "1.1rem",
+        "letterSpacing": "0.12em", "margin": "0 0 10px 0",
+    })
+
+
+def card_wrap(*children, extra=None):
+    style = {
+        "backgroundColor": CARD, "border": f"1px solid {BORDER}",
+        "borderRadius": "6px", "padding": "18px",
+        "flex": "1", "minWidth": "380px",
+    }
+    if extra:
+        style.update(extra)
+    return html.Div(list(children), style=style)
+
+
+def row(*children):
+    return html.Div(list(children), style={
+        "display": "flex", "gap": "14px", "flexWrap": "wrap",
+        "marginBottom": "14px",
+    })
+
+
+def graph(fig):
+    return dcc.Graph(figure=fig, config={"displayModeBar": False},
+                     style={"height": "300px"})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Chart builders
+# ─────────────────────────────────────────────────────────────────────────────
+
+def chart_weekly_volume(df: pd.DataFrame) -> go.Figure:
+    w = df.groupby("week").agg(
+        distance_km=("distance_km", "sum"),
+        moving_time_h=("moving_time_h", "sum"),
+    ).reset_index()
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=w["week"], y=w["distance_km"],
+        name="Distance (km)", marker_color=ORANGE, opacity=0.85,
+    ))
+    fig.add_trace(go.Scatter(
+        x=w["week"], y=w["moving_time_h"],
+        name="Time (h)", line=dict(color=TEAL, width=2),
+        mode="lines", yaxis="y2",
+    ))
+    fig.update_layout(
+        **BASE_LAYOUT,
+        title="Weekly Distance & Riding Time",
+        yaxis2=dict(overlaying="y", side="right", showgrid=False,
+                    tickfont=dict(color=TEAL, size=10), title=dict(text="hours", font=dict(color=TEAL, size=10))),
+    )
+    return fig
+
+
+def chart_monthly_volume(df: pd.DataFrame) -> go.Figure:
+    m = df.groupby("month").agg(
+        distance_km=("distance_km", "sum"),
+        elevation_m=("elevation_m", "sum"),
+        rides=("id", "count"),
+    ).reset_index()
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=m["month"], y=m["distance_km"],
+        name="Distance (km)", marker_color=ORANGE, opacity=0.85,
+    ))
+    fig.add_trace(go.Scatter(
+        x=m["month"], y=m["elevation_m"],
+        name="Elevation (m)", line=dict(color=GREEN, width=2),
+        mode="lines+markers", marker=dict(size=4), yaxis="y2",
+    ))
+    fig.update_layout(
+        **BASE_LAYOUT,
+        title="Monthly Distance & Elevation",
+        yaxis2=dict(overlaying="y", side="right", showgrid=False,
+                    tickfont=dict(color=GREEN, size=10)),
+    )
+    return fig
+
+
+def chart_speed_trend(df: pd.DataFrame) -> go.Figure:
+    sdf = df.dropna(subset=["avg_speed_kmh"]).sort_values("date")
+    rolling = sdf.set_index("date")["avg_speed_kmh"].rolling("28D").mean()
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=sdf["date"], y=sdf["avg_speed_kmh"],
+        mode="markers", name="Avg speed",
+        marker=dict(color=TEAL, size=4, opacity=0.55),
+    ))
+    fig.add_trace(go.Scatter(
+        x=rolling.index, y=rolling.values,
+        mode="lines", name="28-day avg",
+        line=dict(color=TEAL, width=2),
+    ))
+    fig.update_layout(**BASE_LAYOUT, title="Average Speed (km/h)")
+    return fig
+
+
+def chart_hr_trend(df: pd.DataFrame) -> go.Figure:
+    hdf = df.dropna(subset=["avg_hr"]).sort_values("date")
+    if hdf.empty:
+        fig = go.Figure()
+        fig.update_layout(**BASE_LAYOUT, title="Heart Rate — no HR data found")
+        return fig
+
+    rolling = hdf.set_index("date")["avg_hr"].rolling("28D").mean()
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hdf["date"], y=hdf["avg_hr"],
+        mode="markers", name="Avg HR",
+        marker=dict(color=PINK, size=4, opacity=0.55),
+    ))
+    fig.add_trace(go.Scatter(
+        x=rolling.index, y=rolling.values,
+        mode="lines", name="28-day avg",
+        line=dict(color=PINK, width=2),
+    ))
+    fig.update_layout(**BASE_LAYOUT, title="Average Heart Rate (bpm)")
+    return fig
+
+
+def chart_power_trend(df: pd.DataFrame) -> go.Figure:
+    pdf = df.dropna(subset=["avg_watts"]).sort_values("date")
+    if pdf.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="No power data — power meter required",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           font=dict(color=MUTED, size=13), showarrow=False)
+        fig.update_layout(**BASE_LAYOUT, title="Average Power (W)")
+        return fig
+
+    rolling = pdf.set_index("date")["avg_watts"].rolling("28D").mean()
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=pdf["date"], y=pdf["avg_watts"],
+        mode="markers", name="Avg power",
+        marker=dict(color=PURPLE, size=4, opacity=0.55),
+    ))
+    fig.add_trace(go.Scatter(
+        x=rolling.index, y=rolling.values,
+        mode="lines", name="28-day avg",
+        line=dict(color=PURPLE, width=2),
+    ))
+    fig.update_layout(**BASE_LAYOUT, title="Average Power (W)")
+    return fig
+
+
+def chart_elevation_scatter(df: pd.DataFrame) -> go.Figure:
+    fig = px.scatter(
+        df.sort_values("date"),
+        x="distance_km", y="elevation_m",
+        color="year",
+        color_continuous_scale=[ORANGE, AMBER, GREEN, TEAL, PURPLE],
+        hover_data=["name", "date", "avg_speed_kmh"],
+        title="Distance vs Elevation",
+    )
+    fig.update_traces(marker=dict(size=5, opacity=0.7))
+    fig.update_layout(**BASE_LAYOUT)
+    return fig
+
+
+def chart_training_load(df: pd.DataFrame) -> go.Figure:
+    """
+    Estimate Chronic Training Load (CTL ~42d), Acute Training Load (ATL ~7d),
+    and Training Stress Balance (TSB = CTL - ATL).
+    Uses suffer_score where available; falls back to HR x time estimate.
+    """
+    tdf = df.copy()
+    tdf["load"] = tdf["suffer_score"].fillna(
+        tdf["moving_time_h"] * tdf["avg_hr"].fillna(130) / 10
+    )
+    weekly = tdf.groupby("week")["load"].sum().reset_index().sort_values("week")
+
+    loads = weekly["load"].values
+    ctl_vals, atl_vals = [0.0], [0.0]
+    for l in loads[1:]:
+        ctl_vals.append(ctl_vals[-1] + (l - ctl_vals[-1]) / 42)
+        atl_vals.append(atl_vals[-1] + (l - atl_vals[-1]) / 7)
+    tsb = [c - a for c, a in zip(ctl_vals, atl_vals)]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=weekly["week"], y=weekly["load"],
+        name="Weekly Load", marker_color=ORANGE, opacity=0.4,
+    ))
+    fig.add_trace(go.Scatter(
+        x=weekly["week"], y=ctl_vals,
+        name="Fitness (CTL)", line=dict(color=GREEN, width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=weekly["week"], y=atl_vals,
+        name="Fatigue (ATL)", line=dict(color=PINK, width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=weekly["week"], y=tsb,
+        name="Form (TSB)", line=dict(color=TEAL, width=2, dash="dot"),
+        fill="tozeroy", fillcolor="rgba(34,211,238,0.05)",
+    ))
+    fig.update_layout(**BASE_LAYOUT, title="Training Load / Fitness / Fatigue / Form")
+    return fig
+
+
+def chart_heatmap(df: pd.DataFrame) -> go.Figure:
+    df2 = df.copy()
+    df2["week_num"] = df2["date"].dt.isocalendar().week.astype(int)
+    pivot = df2.groupby(["year", "week_num"])["distance_km"].sum().reset_index()
+    recent = sorted(pivot["year"].unique())[-6:]
+    pivot = pivot[pivot["year"].isin(recent)]
+
+    fig = px.density_heatmap(
+        pivot, x="week_num", y=pivot["year"].astype(str),
+        z="distance_km",
+        color_continuous_scale=[DARK, ORANGE, AMBER],
+        title="Ride Volume by Week (km)",
+        nbinsx=53,
+    )
+    fig.update_layout(**BASE_LAYOUT, coloraxis_colorbar=dict(title="km"))
+    return fig
+
+
+def chart_ride_length_hist(df: pd.DataFrame) -> go.Figure:
+    fig = px.histogram(
+        df, x="distance_km", nbins=30,
+        title="Ride Distance Distribution",
+        color_discrete_sequence=[ORANGE],
+    )
+    fig.update_traces(marker_line_color=DARK, marker_line_width=0.5)
+    fig.update_layout(**BASE_LAYOUT)
+    return fig
+
+
+def chart_cadence_trend(df: pd.DataFrame) -> go.Figure:
+    cdf = df.dropna(subset=["avg_cadence"]).sort_values("date")
+    if cdf.empty:
+        fig = go.Figure()
+        fig.update_layout(**BASE_LAYOUT, title="Cadence — no cadence data found")
+        return fig
+
+    rolling = cdf.set_index("date")["avg_cadence"].rolling("28D").mean()
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=cdf["date"], y=cdf["avg_cadence"],
+        mode="markers", name="Avg cadence",
+        marker=dict(color=AMBER, size=4, opacity=0.55),
+    ))
+    fig.add_trace(go.Scatter(
+        x=rolling.index, y=rolling.values,
+        mode="lines", name="28-day avg",
+        line=dict(color=AMBER, width=2),
+    ))
+    fig.update_layout(**BASE_LAYOUT, title="Average Cadence (rpm)")
+    return fig
+
+
+def chart_year_comparison(df: pd.DataFrame) -> go.Figure:
+    """Cumulative distance by year overlaid."""
+    fig = go.Figure()
+    colors = [ORANGE, TEAL, GREEN, PURPLE, PINK, AMBER]
+    years = sorted(df["year"].unique())[-6:]
+    for i, yr in enumerate(years):
+        ydf = df[df["year"] == yr].sort_values("date").copy()
+        ydf["day_of_year"] = ydf["date"].dt.dayofyear
+        ydf["cum_km"] = ydf["distance_km"].cumsum()
+        fig.add_trace(go.Scatter(
+            x=ydf["day_of_year"], y=ydf["cum_km"],
+            mode="lines", name=str(yr),
+            line=dict(color=colors[i % len(colors)], width=2),
+        ))
+    fig.update_layout(
+        **BASE_LAYOUT,
+        title="Cumulative Distance by Year",
+        xaxis_title="Day of Year",
+        yaxis_title="km",
+    )
+    return fig
+
+
+def table_personal_bests(df: pd.DataFrame):
+    records = []
+    categories = [
+        ("Longest ride",     "distance_km",    "{:.1f} km",  "idxmax"),
+        ("Most elevation",   "elevation_m",    "{:.0f} m",   "idxmax"),
+        ("Fastest avg speed","avg_speed_kmh",  "{:.1f} km/h","idxmax"),
+        ("Highest power",    "avg_watts",       "{:.0f} W",   "idxmax"),
+        ("Longest session",  "moving_time_h",   fmt_time,     "idxmax"),
+        ("Lowest avg HR",    "avg_hr",          "{:.0f} bpm", "idxmin"),
+    ]
+
+    for label, col, fmt, func in categories:
+        if col not in df.columns:
+            continue
+        tmp = df.dropna(subset=[col])
+        if tmp.empty:
+            continue
+        idx = getattr(tmp[col], func)()
+        row_data = tmp.loc[idx]
+        val = fmt(row_data[col]) if callable(fmt) else fmt.format(row_data[col])
+        records.append({
+            "Record": label,
+            "Value":  val,
+            "Ride":   str(row_data["name"])[:40],
+            "Date":   str(row_data["date"].date()),
+        })
+
+    if not records:
+        return html.P("No personal bests found.", style={"color": MUTED})
+
+    rdf = pd.DataFrame(records)
+    fig = go.Figure(data=[go.Table(
+        columnwidth=[160, 100, 280, 90],
+        header=dict(
+            values=["Record", "Value", "Ride", "Date"],
+            fill_color=BORDER,
+            font=dict(color=ORANGE, size=11, family=MONO),
+            align="left", height=30,
+        ),
+        cells=dict(
+            values=[rdf[c] for c in rdf.columns],
+            fill_color=CARD,
+            font=dict(color=TEXT, size=11, family=MONO),
+            align="left", height=26,
+        ),
+    )])
+    fig.update_layout(
+        paper_bgcolor=CARD,
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=len(records) * 26 + 40,
+    )
+    return dcc.Graph(figure=fig, config={"displayModeBar": False})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Summary stats
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_summary(df: pd.DataFrame) -> dict:
+    if df.empty:
+        return {}
+    span_years = max((df["date"].max() - df["date"].min()).days / 365.25, 0.01)
+    return {
+        "rides":        len(df),
+        "km":           df["distance_km"].sum(),
+        "hours":        df["moving_time_h"].sum(),
+        "elev":         df["elevation_m"].sum(),
+        "best_km":      df["distance_km"].max(),
+        "avg_speed":    df["avg_speed_kmh"].mean(),
+        "span_years":   span_years,
+        "avg_per_ride": df["distance_km"].sum() / len(df),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Filter helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def apply_filter(time_range: str) -> pd.DataFrame:
+    if DF.empty:
+        return DF
+    now = pd.Timestamp.now()
+    cutoffs = {
+        "3m":   now - pd.Timedelta(days=90),
+        "6m":   now - pd.Timedelta(days=180),
+        "12m":  now - pd.Timedelta(days=365),
+        "year": pd.Timestamp(now.year, 1, 1),
+    }
+    if time_range in cutoffs:
+        return DF[DF["date"] >= cutoffs[time_range]]
+    return DF  # "all"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# App layout
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_layout():
+    if DF.empty:
+        return html.Div([
+            html.H2("No ride data found.", style={"color": ORANGE, "padding": "40px 32px 0"}),
+            html.P("Run  python extract.py  first.", style={"color": MUTED, "padding": "0 32px"}),
+        ], style={"backgroundColor": DARK, "minHeight": "100vh"})
+
+    sources = DF["source"].value_counts()
+    source_str = " / ".join(f"{v} from {k.title()}" for k, v in sources.items())
+
+    return html.Div([
+        # Google Fonts
+        html.Link(rel="stylesheet",
+                  href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&display=swap"),
+
+        # Header bar
+        html.Div([
+            html.Div([
+                html.Div("VELO FITNESS", style={
+                    "color": ORANGE, "fontFamily": DISPLAY, "fontSize": "2.4rem",
+                    "letterSpacing": "0.2em", "lineHeight": "1",
+                }),
+                html.P(source_str, style={
+                    "color": MUTED, "fontFamily": MONO, "fontSize": "11px", "margin": "6px 0 0 0",
+                }),
+            ]),
+            html.Div([
+                dcc.Dropdown(
+                    id="time-filter",
+                    options=[
+                        {"label": "All time",        "value": "all"},
+                        {"label": "This year",       "value": "year"},
+                        {"label": "Last 3 months",   "value": "3m"},
+                        {"label": "Last 6 months",   "value": "6m"},
+                        {"label": "Last 12 months",  "value": "12m"},
+                    ],
+                    value="all",
+                    clearable=False,
+                    style={
+                        "width": "185px",
+                        "fontFamily": MONO,
+                        "fontSize": "12px",
+                    },
+                ),
+            ], style={"display": "flex", "alignItems": "center"}),
+        ], style={
+            "display": "flex", "justifyContent": "space-between", "alignItems": "flex-end",
+            "padding": "22px 32px", "backgroundColor": CARD,
+            "borderBottom": f"1px solid {BORDER}",
+        }),
+
+        # Dynamic content
+        html.Div(id="stat-row", style={
+            "display": "flex", "gap": "14px", "flexWrap": "wrap",
+            "padding": "22px 32px 0",
+        }),
+        html.Div(id="charts", style={"padding": "16px 32px 32px"}),
+
+    ], style={"backgroundColor": DARK, "minHeight": "100vh", "color": TEXT})
+
+
+app = dash.Dash(
+    __name__,
+    title="Velo Fitness",
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1"}],
+    suppress_callback_exceptions=True,
+)
+app.layout = build_layout()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Callbacks
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.callback(
+    Output("stat-row", "children"),
+    Output("charts", "children"),
+    Input("time-filter", "value"),
+)
+def update_all(time_range: str):
+    df = apply_filter(time_range)
+
+    if df.empty:
+        empty = html.P("No rides in this period.", style={"color": MUTED, "padding": "30px 0"})
+        return [], empty
+
+    s = compute_summary(df)
+
+    # ── Stat cards ──
+    cards = [
+        stat_card("Total Rides",    str(s["rides"]),
+                  f"over {s['span_years']:.1f} years", ORANGE),
+        stat_card("Total Distance", f"{s['km']:,.0f} km",
+                  f"avg {s['avg_per_ride']:.0f} km/ride", TEAL),
+        stat_card("Total Time",     fmt_time(s["hours"]), "", GREEN),
+        stat_card("Climbing",       f"{s['elev']/1000:,.1f} km",
+                  "total elevation", PURPLE),
+        stat_card("Best Ride",      f"{s['best_km']:.0f} km",
+                  "longest single ride", PINK),
+        stat_card("Avg Speed",      f"{s['avg_speed']:.1f} km/h",
+                  "across all rides", AMBER),
+    ]
+
+    # ── Charts ──
+    charts = html.Div([
+        row(
+            card_wrap(section_head("Weekly Distance & Riding Time"),   graph(chart_weekly_volume(df))),
+            card_wrap(section_head("Monthly Distance & Elevation"),    graph(chart_monthly_volume(df))),
+        ),
+        row(
+            card_wrap(section_head("Speed Trend"),        graph(chart_speed_trend(df))),
+            card_wrap(section_head("Heart Rate Trend"),   graph(chart_hr_trend(df))),
+        ),
+        row(
+            card_wrap(section_head("Power Trend"),             graph(chart_power_trend(df))),
+            card_wrap(section_head("Cadence Trend"),            graph(chart_cadence_trend(df))),
+        ),
+        row(
+            card_wrap(section_head("Distance vs Elevation"),   graph(chart_elevation_scatter(df))),
+            card_wrap(section_head("Cumulative Distance by Year"), graph(chart_year_comparison(df))),
+        ),
+        row(
+            card_wrap(section_head("Training Load / Fitness / Fatigue / Form"),
+                      graph(chart_training_load(df)),
+                      extra={"flex": "2", "minWidth": "600px"}),
+            card_wrap(section_head("Ride Distance Distribution"),
+                      graph(chart_ride_length_hist(df))),
+        ),
+        row(
+            card_wrap(section_head("Annual Volume Heatmap"),
+                      graph(chart_heatmap(df)),
+                      extra={"flex": "2", "minWidth": "600px"}),
+        ),
+        card_wrap(
+            section_head("Personal Bests"),
+            table_personal_bests(df),
+            extra={"marginBottom": "0"},
+        ),
+    ])
+
+    return cards, charts
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    print()
+    print("=" * 50)
+    print("  Velo Fitness Dashboard")
+    print("  http://127.0.0.1:8050")
+    print("=" * 50)
+    print()
+    app.run(debug=False, port=8050)
