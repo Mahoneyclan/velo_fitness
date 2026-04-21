@@ -436,9 +436,11 @@ def table_fitness_trend(df: pd.DataFrame):
     rows = []
     prev_eff = None
 
-    # Build quarters from most recent backwards
+    # Build quarters from most recent backwards across full history
+    earliest = df["date"].min()
+    max_quarters = int((now - earliest).days / 90) + 2
     quarters = []
-    for i in range(6):
+    for i in range(max_quarters):
         end = now - pd.Timedelta(days=90 * i)
         start = end - pd.Timedelta(days=90)
         chunk = df[(df["date"] >= start) & (df["date"] < end)]
