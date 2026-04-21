@@ -527,6 +527,27 @@ def table_fitness_trend(df: pd.DataFrame):
     )
 
 
+def table_fitness_trend_fig(df: pd.DataFrame) -> go.Figure:
+    """Plotly figure version of the fitness trend table, used by the HTML exporter."""
+    widget = table_fitness_trend(df)
+    if not hasattr(widget, "data"):
+        return go.Figure()
+    rdf = pd.DataFrame(widget.data)
+    cols = list(rdf.columns)
+    trend_colors = [GREEN if t == "▲" else PINK if t == "▼" else MUTED for t in rdf["Trend"]]
+    cell_colors = [trend_colors if c == "Trend" else [TEXT] * len(rdf) for c in cols]
+    fig = go.Figure(data=[go.Table(
+        columnwidth=[170, 50, 90, 75, 85, 65, 80, 50, 95],
+        header=dict(values=cols, fill_color=BORDER,
+                    font=dict(color=ORANGE, size=11, family=MONO), align="left", height=30),
+        cells=dict(values=[rdf[c] for c in cols], fill_color=CARD,
+                   font=dict(color=cell_colors, size=11, family=MONO), align="left", height=26),
+    )])
+    fig.update_layout(paper_bgcolor=CARD, margin=dict(l=0, r=0, t=0, b=0),
+                      height=len(rdf) * 26 + 40)
+    return fig
+
+
 def table_personal_bests(df: pd.DataFrame):
     records = []
     categories = [
@@ -919,19 +940,13 @@ def export_html(n_clicks, time_range, ride_type):
         )
     )
 
-    def widget_html(widget, height):
-        if hasattr(widget, "figure"):
-            return fig_html(widget.figure, height=height)
-        return f'<p style="color:{MUTED};font-family:monospace">{widget.children}</p>'
-
-    fitness_widget = table_fitness_trend(df)
     fitness_inner = (
         f'<p style="color:{MUTED};font-size:10px;font-family:monospace;margin:0 0 10px">'
         f'90-day rolling windows · Efficiency = avg speed ÷ avg HR · Higher = fitter</p>'
-        + widget_html(fitness_widget, height=200)
+        + fig_html(table_fitness_trend_fig(df), height=200)
     )
     charts_html += card("Fitness Trend", fitness_inner) + '<div style="margin-bottom:14px"></div>'
-    charts_html += card("Personal Bests", widget_html(table_personal_bests(df), height=200))
+    charts_html += card("Personal Bests", fig_html(table_personal_bests(df).figure, height=200))
 
     html_out = f"""<!DOCTYPE html>
 <html><head>
