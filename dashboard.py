@@ -3,20 +3,28 @@
 dashboard.py
 ────────────
 Interactive cycling fitness dashboard.
-Reads rides.json produced by extract.py.
+
+Automatically fetches fresh data from Strava/Garmin via extract.py on startup,
+once per day. Subsequent runs the same day skip the fetch and load from cache.
 
 Usage:
     python dashboard.py
     Then open  http://127.0.0.1:8050  in your browser.
+
+Features:
+    - Time range filter (3 months → all time)
+    - Export HTML button — downloads a self-contained snapshot to ~/Downloads
 """
 
 import json
 from pathlib import Path
 
+import extract
 import dash
 from dash import dcc, html, Input, Output
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.io as pio
 import pandas as pd
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -65,6 +73,10 @@ def load_rides() -> pd.DataFrame:
     return df.sort_values("date").reset_index(drop=True)
 
 
+from datetime import date
+_last_run = date.fromtimestamp(DATA_FILE.stat().st_mtime) if DATA_FILE.exists() else None
+if _last_run != date.today():
+    extract.main()
 DF = load_rides()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -649,6 +661,19 @@ def build_layout():
                 }),
             ]),
             html.Div([
+                html.Button("Export HTML", id="export-btn", n_clicks=0, style={
+                    "backgroundColor": "transparent",
+                    "border": f"1px solid {BORDER}",
+                    "color": TEXT,
+                    "fontFamily": MONO,
+                    "fontSize": "11px",
+                    "padding": "6px 14px",
+                    "cursor": "pointer",
+                    "borderRadius": "4px",
+                    "marginRight": "10px",
+                    "letterSpacing": "0.08em",
+                }),
+                dcc.Download(id="export-download"),
                 dcc.Dropdown(
                     id="time-filter",
                     options=[
@@ -773,6 +798,85 @@ def update_all(time_range: str):
     ])
 
     return cards, charts
+
+
+@app.callback(
+    Output("export-download", "data"),
+    Input("export-btn", "n_clicks"),
+    Input("time-filter", "value"),
+    prevent_initial_call=True,
+)
+def export_html(n_clicks, time_range):
+    from dash import ctx
+    if ctx.triggered_id != "export-btn" or not n_clicks:
+        return dash.no_update
+
+    df = apply_filter(time_range)
+    if df.empty:
+        return dash.no_update
+
+    s = compute_summary(df)
+    figures = [
+        ("Weekly Distance & Riding Time",          chart_weekly_volume(df)),
+        ("Monthly Distance & Elevation",            chart_monthly_volume(df)),
+        ("Speed Trend",                             chart_speed_trend(df)),
+        ("Heart Rate Trend",                        chart_hr_trend(df)),
+        ("Power Trend",                             chart_power_trend(df)),
+        ("Cadence Trend",                           chart_cadence_trend(df)),
+        ("Distance vs Elevation",                   chart_elevation_scatter(df)),
+        ("Cumulative Distance by Year",             chart_year_comparison(df)),
+        ("Training Load / Fitness / Fatigue / Form",chart_training_load(df)),
+        ("Ride Distance Distribution",              chart_ride_length_hist(df)),
+        ("Annual Volume Heatmap",                   chart_heatmap(df)),
+    ]
+
+    chart_html = ""
+    for i, (title, fig) in enumerate(figures):
+        chart_html += f'<h2 style="color:{ORANGE};font-family:Impact,sans-serif;letter-spacing:0.1em;margin:32px 0 8px">{title.upper()}</h2>'
+        chart_html += pio.to_html(fig, full_html=False, include_plotlyjs=(i == 0))
+
+    stat_rows = [
+        ("Total Rides",    f"{s['rides']}",              f"over {s['span_years']:.1f} years"),
+        ("Total Distance", f"{s['km']:,.0f} km",         f"avg {s['avg_per_ride']:.0f} km/ride"),
+        ("Total Time",     fmt_time(s['hours']),          ""),
+        ("Climbing",       f"{s['elev']/1000:,.1f} km",  "total elevation"),
+        ("Best Ride",      f"{s['best_km']:.0f} km",     "longest single ride"),
+        ("Avg Speed",      f"{s['avg_speed']:.1f} km/h", "across all rides"),
+    ]
+    stats_html = '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:28px">'
+    for label, value, sub in stat_rows:
+        stats_html += f'''
+        <div style="background:{CARD};border:1px solid {BORDER};border-top:3px solid {ORANGE};
+                    border-radius:6px;padding:16px 20px;min-width:150px;flex:1">
+          <p style="color:{MUTED};font-size:10px;letter-spacing:0.15em;text-transform:uppercase;
+                    margin:0 0 6px;font-family:monospace">{label}</p>
+          <div style="color:{ORANGE};font-size:1.8rem;font-family:Impact,sans-serif;
+                      letter-spacing:0.04em;line-height:1">{value}</div>
+          <p style="color:{MUTED};font-size:10px;margin:6px 0 0;font-family:monospace">{sub}</p>
+        </div>'''
+    stats_html += '</div>'
+
+    from datetime import datetime
+    exported_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    label = dict(all="All time", year="This year", **{k: f"Last {k}" for k in ["3m","6m","12m","2y","3y","5y"]}).get(time_range, time_range)
+
+    html_out = f"""<!DOCTYPE html>
+<html><head>
+  <meta charset="utf-8">
+  <title>Velo Fitness — {label}</title>
+  <style>body{{background:{DARK};color:{TEXT};font-family:monospace;margin:0;padding:0}}
+         .wrap{{max-width:1200px;margin:0 auto;padding:32px}}</style>
+</head><body><div class="wrap">
+  <div style="border-bottom:1px solid {BORDER};padding-bottom:18px;margin-bottom:28px">
+    <div style="color:{ORANGE};font-family:Impact,sans-serif;font-size:2.2rem;letter-spacing:0.2em">VELO FITNESS</div>
+    <p style="color:{MUTED};font-size:11px;margin:6px 0 0">{label} &nbsp;·&nbsp; Exported {exported_at}</p>
+  </div>
+  {stats_html}
+  {chart_html}
+</div></body></html>"""
+
+    filename = f"velo_fitness_{time_range}_{datetime.now().strftime('%Y%m%d')}.html"
+    return dcc.send_string(html_out, filename)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

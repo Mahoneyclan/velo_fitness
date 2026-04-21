@@ -221,7 +221,9 @@ def fetch_strava_activities(token: str) -> List[dict]:
             headers=headers,
             params={"per_page": per_page, "page": page},
         )
-        r.raise_for_status()
+        if not r.ok:
+            print(f"  Strava returned {r.status_code} on page {page} — stopping pagination.")
+            break
         batch = r.json()
         if not batch:
             break
