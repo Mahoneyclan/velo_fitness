@@ -21,7 +21,7 @@ from pathlib import Path
 
 import extract
 import dash
-from dash import dcc, html, Input, Output
+from dash import dcc, html, Input, Output, dash_table
 import plotly.graph_objects as go
 import plotly.express as px
 import plotly.io as pio
@@ -58,17 +58,19 @@ def load_rides() -> pd.DataFrame:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # ── Data quality filters ──
-    # Drop junk rides (accidental starts, corrupt GPS)
-    df = df[df["distance_km"] >= 1.0]
-    df = df[df["moving_time_s"] >= 300]  # at least 5 minutes
+    # Keep indoor rides (distance_km == 0) if they have meaningful duration;
+    # drop accidental starts (< 5 min) and outdoor rides shorter than 1 km
+    df = df[(df["distance_km"] >= 1.0) | (df["moving_time_s"] >= 300)]
+    df = df[df["moving_time_s"] >= 300]
 
     # Null out implausible values rather than dropping entire rides
-    df.loc[df["avg_speed_kmh"] > 55, "avg_speed_kmh"] = None      # impossible avg
+    df.loc[df["avg_speed_kmh"] > 55, "avg_speed_kmh"] = None      # impossible avg speed
     df.loc[df["avg_watts"] > 600, "avg_watts"] = None              # impossible avg power
     df.loc[df["max_watts"] > 2500, "max_watts"] = None
-    df.loc[df["avg_hr"] < 50, "avg_hr"] = None                    # sensor glitch
+    df.loc[df["avg_hr"] < 60, "avg_hr"] = None                    # sensor dropout
     df.loc[df["avg_hr"] > 220, "avg_hr"] = None
     df.loc[df["max_hr"] > 230, "max_hr"] = None
+    df.loc[df["avg_cadence"] < 20, "avg_cadence"] = None           # cadence sensor not recording
 
     return df.sort_values("date").reset_index(drop=True)
 
@@ -491,47 +493,38 @@ def table_fitness_trend(df: pd.DataFrame):
         return html.P("Not enough data for fitness trend.", style={"color": MUTED})
 
     rdf = pd.DataFrame(rows)
-    cols = list(rdf.columns)
 
-    # Color the trend column
-    trend_colors = []
-    for t in rdf["Trend"]:
-        if t == "▲":
-            trend_colors.append(GREEN)
-        elif t == "▼":
-            trend_colors.append(PINK)
-        else:
-            trend_colors.append(MUTED)
-
-    # Build cell colors — each column gets a list of colors per row
-    cell_colors = []
-    for c in cols:
-        if c == "Trend":
-            cell_colors.append(trend_colors)
-        else:
-            cell_colors.append([TEXT] * len(rdf))
-
-    fig = go.Figure(data=[go.Table(
-        columnwidth=[170, 50, 90, 75, 85, 65, 80, 50, 95],
-        header=dict(
-            values=cols,
-            fill_color=BORDER,
-            font=dict(color=ORANGE, size=11, family=MONO),
-            align="left", height=30,
-        ),
-        cells=dict(
-            values=[rdf[c] for c in cols],
-            fill_color=CARD,
-            font=dict(color=cell_colors, size=11, family=MONO),
-            align="left", height=26,
-        ),
-    )])
-    fig.update_layout(
-        paper_bgcolor=CARD,
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=len(rows) * 26 + 40,
+    return dash_table.DataTable(
+        data=rdf.to_dict("records"),
+        columns=[{"name": c, "id": c} for c in rdf.columns],
+        sort_action="native",
+        style_table={"overflowX": "auto"},
+        style_header={
+            "backgroundColor": BORDER,
+            "color": ORANGE,
+            "fontFamily": MONO,
+            "fontSize": "11px",
+            "fontWeight": "500",
+            "border": f"1px solid {BORDER}",
+            "textAlign": "left",
+        },
+        style_cell={
+            "backgroundColor": CARD,
+            "color": TEXT,
+            "fontFamily": MONO,
+            "fontSize": "11px",
+            "border": f"1px solid {BORDER}",
+            "padding": "6px 10px",
+            "textAlign": "left",
+            "whiteSpace": "normal",
+        },
+        style_data_conditional=[
+            {"if": {"filter_query": '{Trend} = "▲"', "column_id": "Trend"}, "color": GREEN},
+            {"if": {"filter_query": '{Trend} = "▼"', "column_id": "Trend"}, "color": PINK},
+            {"if": {"filter_query": '{Trend} = "―"', "column_id": "Trend"}, "color": MUTED},
+            {"if": {"state": "active"}, "backgroundColor": BORDER, "border": f"1px solid {ORANGE}"},
+        ],
     )
-    return dcc.Graph(figure=fig, config={"displayModeBar": False})
 
 
 def table_personal_bests(df: pd.DataFrame):
@@ -612,9 +605,10 @@ def compute_summary(df: pd.DataFrame) -> dict:
 # Filter helper
 # ─────────────────────────────────────────────────────────────────────────────
 
-def apply_filter(time_range: str) -> pd.DataFrame:
+def apply_filter(time_range: str, ride_type: str = "all") -> pd.DataFrame:
     if DF.empty:
         return DF
+    df = DF
     now = pd.Timestamp.now()
     cutoffs = {
         "3m":   now - pd.Timedelta(days=90),
@@ -626,8 +620,10 @@ def apply_filter(time_range: str) -> pd.DataFrame:
         "year": pd.Timestamp(now.year, 1, 1),
     }
     if time_range in cutoffs:
-        return DF[DF["date"] >= cutoffs[time_range]]
-    return DF  # "all"
+        df = df[df["date"] >= cutoffs[time_range]]
+    if ride_type != "all":
+        df = df[df["activity_type"] == ride_type]
+    return df
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -674,6 +670,21 @@ def build_layout():
                     "letterSpacing": "0.08em",
                 }),
                 dcc.Download(id="export-download"),
+                dcc.Dropdown(
+                    id="type-filter",
+                    options=[{"label": "All ride types", "value": "all"}] + [
+                        {"label": t.replace("_", " ").title(), "value": t}
+                        for t in sorted(DF["activity_type"].dropna().unique())
+                    ],
+                    value="all",
+                    clearable=False,
+                    style={
+                        "width": "185px",
+                        "fontFamily": MONO,
+                        "fontSize": "12px",
+                        "marginRight": "10px",
+                    },
+                ),
                 dcc.Dropdown(
                     id="time-filter",
                     options=[
@@ -728,9 +739,10 @@ app.layout = build_layout()
     Output("stat-row", "children"),
     Output("charts", "children"),
     Input("time-filter", "value"),
+    Input("type-filter", "value"),
 )
-def update_all(time_range: str):
-    df = apply_filter(time_range)
+def update_all(time_range: str, ride_type: str):
+    df = apply_filter(time_range, ride_type)
 
     if df.empty:
         empty = html.P("No rides in this period.", style={"color": MUTED, "padding": "30px 0"})
@@ -804,14 +816,15 @@ def update_all(time_range: str):
     Output("export-download", "data"),
     Input("export-btn", "n_clicks"),
     Input("time-filter", "value"),
+    Input("type-filter", "value"),
     prevent_initial_call=True,
 )
-def export_html(n_clicks, time_range):
+def export_html(n_clicks, time_range, ride_type):
     from dash import ctx
     if ctx.triggered_id != "export-btn" or not n_clicks:
         return dash.no_update
 
-    df = apply_filter(time_range)
+    df = apply_filter(time_range, ride_type)
     if df.empty:
         return dash.no_update
 
