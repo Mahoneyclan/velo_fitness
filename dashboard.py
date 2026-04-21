@@ -625,6 +625,10 @@ def apply_filter(time_range: str, ride_type: str = "all") -> pd.DataFrame:
         df = df[df["commute"] == True]
     elif ride_type == "no_commute":
         df = df[df["commute"] != True]
+    elif ride_type == "indoor":
+        df = df[df["indoor"] == True]
+    elif ride_type == "outdoor":
+        df = df[df["indoor"] != True]
     elif ride_type != "all":
         df = df[df["activity_type"] == ride_type]
     return df
@@ -677,9 +681,11 @@ def build_layout():
                 dcc.Dropdown(
                     id="type-filter",
                     options=(
-                        [{"label": "All ride types", "value": "all"},
-                         {"label": "Commutes only", "value": "commute"},
-                         {"label": "No commutes", "value": "no_commute"}] +
+                        [{"label": "All ride types",  "value": "all"},
+                         {"label": "Outdoor only",    "value": "outdoor"},
+                         {"label": "Indoor only",     "value": "indoor"},
+                         {"label": "Commutes only",   "value": "commute"},
+                         {"label": "No commutes",     "value": "no_commute"}] +
                         [{"label": t.replace("_", " ").title(), "value": t}
                          for t in sorted(DF["activity_type"].dropna().unique())]
                     ),

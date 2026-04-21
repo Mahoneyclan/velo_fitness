@@ -267,6 +267,7 @@ def map_strava_ride(activity: dict) -> dict:
         "gear":           activity.get("gear", {}).get("name") if isinstance(activity.get("gear"), dict) else None,
         "activity_type":  activity.get("sport_type") or activity.get("type", "Ride"),
         "commute":        activity.get("commute", False),
+        "indoor":         activity.get("trainer", False),
     }
 
 
@@ -361,6 +362,7 @@ def map_garmin_ride(activity: dict) -> dict:
         "gear":           None,
         "activity_type":  activity.get("activityType", {}).get("typeKey", "Ride"),
         "commute":        False,
+        "indoor":         False,
     }
 
 
