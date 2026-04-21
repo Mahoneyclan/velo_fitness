@@ -64,7 +64,7 @@ def load_rides() -> pd.DataFrame:
     df = df[df["moving_time_s"] >= 300]
 
     # Null out implausible values rather than dropping entire rides
-    df.loc[df["avg_speed_kmh"] > 55, "avg_speed_kmh"] = None      # impossible avg speed
+    df.loc[df["avg_speed_kmh"] > 60, "avg_speed_kmh"] = None      # impossible avg speed
     df.loc[df["avg_watts"] > 600, "avg_watts"] = None              # impossible avg power
     df.loc[df["max_watts"] > 2500, "max_watts"] = None
     df.loc[df["avg_hr"] < 70, "avg_hr"] = None                    # sensor dropout
