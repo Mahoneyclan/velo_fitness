@@ -981,10 +981,15 @@ def export_html(n_clicks, time_range, ride_type):
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import logging
+    log = logging.getLogger("werkzeug")
+    log.setLevel(logging.ERROR)
+
     print()
     print("=" * 50)
     print("  Velo Fitness Dashboard")
     print("  http://127.0.0.1:8050")
+    print("  Press CTRL+C to quit")
     print("=" * 50)
     print()
     app.run(debug=False, port=8050)
