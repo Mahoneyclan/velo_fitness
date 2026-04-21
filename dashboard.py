@@ -872,13 +872,15 @@ def export_html(n_clicks, time_range, ride_type):
     def fig_html(fig, height=300):
         include_js = not plotlyjs_loaded[0]
         plotlyjs_loaded[0] = True
+        fig = fig.update_layout(autosize=True, width=None, height=height)
         return pio.to_html(fig, full_html=False, include_plotlyjs=include_js,
-                           default_height=f"{height}px")
+                           default_height=f"{height}px",
+                           config={"responsive": True})
 
     def card(title, inner, flex="1", min_width="380px"):
         return (
             f'<div style="background:{CARD};border:1px solid {BORDER};border-radius:6px;'
-            f'padding:18px;flex:{flex};min-width:{min_width};box-sizing:border-box">'
+            f'padding:18px;flex:{flex};min-width:{min_width};box-sizing:border-box;overflow:hidden">'
             f'<p style="color:{ORANGE};font-family:Impact,sans-serif;font-size:1.1rem;'
             f'letter-spacing:0.12em;margin:0 0 10px">{title.upper()}</p>'
             f'{inner}</div>'
