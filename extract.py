@@ -216,13 +216,19 @@ def fetch_strava_activities(token: str) -> List[dict]:
 
     while True:
         print(f"  Strava page {page}...")
-        r = requests.get(
-            f"{STRAVA_API_BASE}/athlete/activities",
-            headers=headers,
-            params={"per_page": per_page, "page": page},
-        )
-        if not r.ok:
-            print(f"  Strava returned {r.status_code} on page {page} — stopping pagination.")
+        for attempt in range(4):
+            r = requests.get(
+                f"{STRAVA_API_BASE}/athlete/activities",
+                headers=headers,
+                params={"per_page": per_page, "page": page},
+            )
+            if r.ok:
+                break
+            wait = 2 ** attempt * 5  # 5s, 10s, 20s, 40s
+            print(f"  Strava {r.status_code} on page {page}, retrying in {wait}s...")
+            time.sleep(wait)
+        else:
+            print(f"  Strava page {page} failed after 4 attempts — stopping pagination.")
             break
         batch = r.json()
         if not batch:
@@ -231,7 +237,7 @@ def fetch_strava_activities(token: str) -> List[dict]:
         if len(batch) < per_page:
             break
         page += 1
-        time.sleep(0.5)  # respect rate limits
+        time.sleep(1)
 
     print(f"  Fetched {len(all_activities)} activities from Strava.")
     return all_activities
@@ -440,7 +446,9 @@ def main():
         if token:
             activities = fetch_strava_activities(token)
             # Filter to cycling
-            cycling = [a for a in activities if a.get("type") in ("Ride", "VirtualRide")]
+            cycling = [a for a in activities if a.get("type") in (
+                "Ride", "VirtualRide", "EBikeRide", "GravelRide", "MountainBikeRide", "Handcycle"
+            )]
             print(f"  {len(cycling)} cycling rides found.")
 
             for act in cycling:
