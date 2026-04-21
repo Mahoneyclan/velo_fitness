@@ -2,7 +2,7 @@
 
 Interactive cycling fitness dashboard built from your Strava and Garmin data.
 
-👉 [View a live dashboard export](https://raw.githubusercontent.com/Mahoneyclan/velo_fitness/main/velo_fitness_all.html) — download and open in any browser.
+👉 [View a live dashboard export](https://htmlpreview.github.io/?https://github.com/Mahoneyclan/velo_fitness/blob/main/velo_fitness_all.html)
 
 ---
 
