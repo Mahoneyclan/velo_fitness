@@ -410,8 +410,8 @@ def chart_cadence_trend(df: pd.DataFrame) -> go.Figure:
 def chart_year_comparison(df: pd.DataFrame) -> go.Figure:
     """Cumulative distance by year overlaid."""
     fig = go.Figure()
-    colors = [ORANGE, TEAL, GREEN, PURPLE, PINK, AMBER]
-    years = sorted(df["year"].unique())[-6:]
+    colors = [ORANGE, TEAL, GREEN, PURPLE, PINK, AMBER, "#60a5fa", "#34d399", "#fb923c", "#e879f9"]
+    years = sorted(df["year"].unique())
     for i, yr in enumerate(years):
         ydf = df[df["year"] == yr].sort_values("date").copy()
         ydf["day_of_year"] = ydf["date"].dt.dayofyear
