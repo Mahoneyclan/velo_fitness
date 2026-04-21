@@ -621,7 +621,11 @@ def apply_filter(time_range: str, ride_type: str = "all") -> pd.DataFrame:
     }
     if time_range in cutoffs:
         df = df[df["date"] >= cutoffs[time_range]]
-    if ride_type != "all":
+    if ride_type == "commute":
+        df = df[df["commute"] == True]
+    elif ride_type == "no_commute":
+        df = df[df["commute"] != True]
+    elif ride_type != "all":
         df = df[df["activity_type"] == ride_type]
     return df
 
@@ -672,10 +676,13 @@ def build_layout():
                 dcc.Download(id="export-download"),
                 dcc.Dropdown(
                     id="type-filter",
-                    options=[{"label": "All ride types", "value": "all"}] + [
-                        {"label": t.replace("_", " ").title(), "value": t}
-                        for t in sorted(DF["activity_type"].dropna().unique())
-                    ],
+                    options=(
+                        [{"label": "All ride types", "value": "all"},
+                         {"label": "Commutes only", "value": "commute"},
+                         {"label": "No commutes", "value": "no_commute"}] +
+                        [{"label": t.replace("_", " ").title(), "value": t}
+                         for t in sorted(DF["activity_type"].dropna().unique())]
+                    ),
                     value="all",
                     clearable=False,
                     style={
