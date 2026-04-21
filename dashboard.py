@@ -816,63 +816,117 @@ def export_html(n_clicks, time_range):
         return dash.no_update
 
     s = compute_summary(df)
-    figures = [
-        ("Weekly Distance & Riding Time",          chart_weekly_volume(df)),
-        ("Monthly Distance & Elevation",            chart_monthly_volume(df)),
-        ("Speed Trend",                             chart_speed_trend(df)),
-        ("Heart Rate Trend",                        chart_hr_trend(df)),
-        ("Power Trend",                             chart_power_trend(df)),
-        ("Cadence Trend",                           chart_cadence_trend(df)),
-        ("Distance vs Elevation",                   chart_elevation_scatter(df)),
-        ("Cumulative Distance by Year",             chart_year_comparison(df)),
-        ("Training Load / Fitness / Fatigue / Form",chart_training_load(df)),
-        ("Ride Distance Distribution",              chart_ride_length_hist(df)),
-        ("Annual Volume Heatmap",                   chart_heatmap(df)),
-    ]
-
-    chart_html = ""
-    for i, (title, fig) in enumerate(figures):
-        chart_html += f'<h2 style="color:{ORANGE};font-family:Impact,sans-serif;letter-spacing:0.1em;margin:32px 0 8px">{title.upper()}</h2>'
-        chart_html += pio.to_html(fig, full_html=False, include_plotlyjs=(i == 0))
-
-    stat_rows = [
-        ("Total Rides",    f"{s['rides']}",              f"over {s['span_years']:.1f} years"),
-        ("Total Distance", f"{s['km']:,.0f} km",         f"avg {s['avg_per_ride']:.0f} km/ride"),
-        ("Total Time",     fmt_time(s['hours']),          ""),
-        ("Climbing",       f"{s['elev']/1000:,.1f} km",  "total elevation"),
-        ("Best Ride",      f"{s['best_km']:.0f} km",     "longest single ride"),
-        ("Avg Speed",      f"{s['avg_speed']:.1f} km/h", "across all rides"),
-    ]
-    stats_html = '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:28px">'
-    for label, value, sub in stat_rows:
-        stats_html += f'''
-        <div style="background:{CARD};border:1px solid {BORDER};border-top:3px solid {ORANGE};
-                    border-radius:6px;padding:16px 20px;min-width:150px;flex:1">
-          <p style="color:{MUTED};font-size:10px;letter-spacing:0.15em;text-transform:uppercase;
-                    margin:0 0 6px;font-family:monospace">{label}</p>
-          <div style="color:{ORANGE};font-size:1.8rem;font-family:Impact,sans-serif;
-                      letter-spacing:0.04em;line-height:1">{value}</div>
-          <p style="color:{MUTED};font-size:10px;margin:6px 0 0;font-family:monospace">{sub}</p>
-        </div>'''
-    stats_html += '</div>'
-
     from datetime import datetime
     exported_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    label = dict(all="All time", year="This year", **{k: f"Last {k}" for k in ["3m","6m","12m","2y","3y","5y"]}).get(time_range, time_range)
+    range_label = dict(all="All time", year="This year", **{k: f"Last {k}" for k in ["3m","6m","12m","2y","3y","5y"]}).get(time_range, time_range)
+
+    plotlyjs_loaded = [False]
+
+    def fig_html(fig, height=300):
+        include_js = not plotlyjs_loaded[0]
+        plotlyjs_loaded[0] = True
+        return pio.to_html(fig, full_html=False, include_plotlyjs=include_js,
+                           default_height=f"{height}px")
+
+    def card(title, inner, flex="1", min_width="380px"):
+        return (
+            f'<div style="background:{CARD};border:1px solid {BORDER};border-radius:6px;'
+            f'padding:18px;flex:{flex};min-width:{min_width};box-sizing:border-box">'
+            f'<p style="color:{ORANGE};font-family:Impact,sans-serif;font-size:1.1rem;'
+            f'letter-spacing:0.12em;margin:0 0 10px">{title.upper()}</p>'
+            f'{inner}</div>'
+        )
+
+    def row(*cards):
+        return (
+            f'<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:14px">'
+            + "".join(cards) +
+            '</div>'
+        )
+
+    # Stat cards
+    stat_items = [
+        ("Total Rides",    f"{s['rides']}",              f"over {s['span_years']:.1f} years",  ORANGE),
+        ("Total Distance", f"{s['km']:,.0f} km",         f"avg {s['avg_per_ride']:.0f} km/ride", TEAL),
+        ("Total Time",     fmt_time(s['hours']),          "",                                    GREEN),
+        ("Climbing",       f"{s['elev']/1000:,.1f} km",  "total elevation",                     PURPLE),
+        ("Best Ride",      f"{s['best_km']:.0f} km",     "longest single ride",                 PINK),
+        ("Avg Speed",      f"{s['avg_speed']:.1f} km/h", "across all rides",                    AMBER),
+    ]
+    stats_html = '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:14px">'
+    for lbl, val, sub, color in stat_items:
+        stats_html += (
+            f'<div style="background:{CARD};border:1px solid {BORDER};border-top:3px solid {color};'
+            f'border-radius:6px;padding:16px 20px;min-width:150px;flex:1;box-sizing:border-box">'
+            f'<p style="color:{MUTED};font-size:10px;letter-spacing:0.15em;text-transform:uppercase;'
+            f'margin:0 0 6px;font-family:monospace">{lbl}</p>'
+            f'<div style="color:{color};font-size:1.8rem;font-family:Impact,sans-serif;'
+            f'letter-spacing:0.04em;line-height:1">{val}</div>'
+            f'<p style="color:{MUTED};font-size:10px;margin:6px 0 0;font-family:monospace">{sub}</p>'
+            f'</div>'
+        )
+    stats_html += '</div>'
+
+    charts_html = (
+        row(
+            card("Weekly Distance & Riding Time", fig_html(chart_weekly_volume(df))),
+            card("Monthly Distance & Elevation",  fig_html(chart_monthly_volume(df))),
+        ) +
+        row(
+            card("Speed Trend",       fig_html(chart_speed_trend(df))),
+            card("Heart Rate Trend",  fig_html(chart_hr_trend(df))),
+        ) +
+        row(
+            card("Power Trend",   fig_html(chart_power_trend(df))),
+            card("Cadence Trend", fig_html(chart_cadence_trend(df))),
+        ) +
+        row(
+            card("Distance vs Elevation",       fig_html(chart_elevation_scatter(df))),
+            card("Cumulative Distance by Year",  fig_html(chart_year_comparison(df))),
+        ) +
+        row(
+            card("Training Load / Fitness / Fatigue / Form", fig_html(chart_training_load(df), height=300), flex="2", min_width="600px"),
+            card("Ride Distance Distribution",               fig_html(chart_ride_length_hist(df))),
+        ) +
+        row(
+            card("Annual Volume Heatmap", fig_html(chart_heatmap(df)), flex="2", min_width="600px"),
+        )
+    )
+
+    def widget_html(widget, height):
+        if hasattr(widget, "figure"):
+            return fig_html(widget.figure, height=height)
+        return f'<p style="color:{MUTED};font-family:monospace">{widget.children}</p>'
+
+    fitness_widget = table_fitness_trend(df)
+    fitness_inner = (
+        f'<p style="color:{MUTED};font-size:10px;font-family:monospace;margin:0 0 10px">'
+        f'90-day rolling windows · Efficiency = avg speed ÷ avg HR · Higher = fitter</p>'
+        + widget_html(fitness_widget, height=200)
+    )
+    charts_html += card("Fitness Trend", fitness_inner) + '<div style="margin-bottom:14px"></div>'
+    charts_html += card("Personal Bests", widget_html(table_personal_bests(df), height=200))
 
     html_out = f"""<!DOCTYPE html>
 <html><head>
   <meta charset="utf-8">
-  <title>Velo Fitness — {label}</title>
-  <style>body{{background:{DARK};color:{TEXT};font-family:monospace;margin:0;padding:0}}
-         .wrap{{max-width:1200px;margin:0 auto;padding:32px}}</style>
+  <title>Velo Fitness — {range_label}</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    * {{ box-sizing: border-box }}
+    body {{ background:{DARK};color:{TEXT};font-family:'IBM Plex Mono',monospace;margin:0;padding:0 }}
+    .wrap {{ max-width:1400px;margin:0 auto;padding:32px }}
+  </style>
 </head><body><div class="wrap">
-  <div style="border-bottom:1px solid {BORDER};padding-bottom:18px;margin-bottom:28px">
-    <div style="color:{ORANGE};font-family:Impact,sans-serif;font-size:2.2rem;letter-spacing:0.2em">VELO FITNESS</div>
-    <p style="color:{MUTED};font-size:11px;margin:6px 0 0">{label} &nbsp;·&nbsp; Exported {exported_at}</p>
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;
+              border-bottom:1px solid {BORDER};padding-bottom:18px;margin-bottom:22px">
+    <div>
+      <div style="color:{ORANGE};font-family:'Bebas Neue',Impact,sans-serif;font-size:2.4rem;letter-spacing:0.2em;line-height:1">VELO FITNESS</div>
+      <p style="color:{MUTED};font-size:11px;margin:6px 0 0">{range_label} &nbsp;·&nbsp; Exported {exported_at}</p>
+    </div>
   </div>
   {stats_html}
-  {chart_html}
+  {charts_html}
 </div></body></html>"""
 
     filename = f"velo_fitness_{time_range}_{datetime.now().strftime('%Y%m%d')}.html"
