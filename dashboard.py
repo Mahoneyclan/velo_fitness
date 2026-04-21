@@ -358,8 +358,6 @@ def chart_heatmap(df: pd.DataFrame) -> go.Figure:
     df2 = df.copy()
     df2["week_num"] = df2["date"].dt.isocalendar().week.astype(int)
     pivot = df2.groupby(["year", "week_num"])["distance_km"].sum().reset_index()
-    recent = sorted(pivot["year"].unique())[-6:]
-    pivot = pivot[pivot["year"].isin(recent)]
 
     fig = px.density_heatmap(
         pivot, x="week_num", y=pivot["year"].astype(str),
