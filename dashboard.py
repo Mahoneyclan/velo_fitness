@@ -67,7 +67,7 @@ def load_rides() -> pd.DataFrame:
     df.loc[df["avg_speed_kmh"] > 55, "avg_speed_kmh"] = None      # impossible avg speed
     df.loc[df["avg_watts"] > 600, "avg_watts"] = None              # impossible avg power
     df.loc[df["max_watts"] > 2500, "max_watts"] = None
-    df.loc[df["avg_hr"] < 60, "avg_hr"] = None                    # sensor dropout
+    df.loc[df["avg_hr"] < 70, "avg_hr"] = None                    # sensor dropout
     df.loc[df["avg_hr"] > 220, "avg_hr"] = None
     df.loc[df["max_hr"] > 230, "max_hr"] = None
     df.loc[df["avg_cadence"] < 20, "avg_cadence"] = None           # cadence sensor not recording
