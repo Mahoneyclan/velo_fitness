@@ -91,3 +91,21 @@ Click **Export HTML** to download a self-contained HTML snapshot of all charts. 
 - **Data quality** — rides shorter than 1 km or 5 minutes are dropped. Implausible sensor values (avg HR < 70, avg speed > 55 km/h, avg power > 600 W) are nulled rather than dropping the whole ride.
 - **Training load** — calculated from Strava suffer scores where available, otherwise estimated from HR × time.
 - **Power data** — only appears if you recorded with a power meter.
+
+---
+
+## Boxing extractor (`boxing_extract.py`) — superseded, kept for reference only
+
+This script is **no longer part of the active pipeline**. The
+[VeloFitness iOS app](https://github.com/Mahoneyclan/velo-fitness-ios)'s Boxing tab now
+fetches and parses boxing activities directly from Garmin on-device (`FITBoxingParser.swift`
+in that repo) — no Mac, no Python, no iCloud handoff required. That Swift parser's
+developer-field mapping was validated against this script's `fitparse`-based decode of a
+real f3b export before the on-device version was written, so this file remains useful as
+a reference/cross-check (e.g. via `python boxing_extract.py --file path/to/activity.fit`)
+if the on-device parser ever needs debugging against a fresh sample, but it does not need
+to run for the app to work.
+
+Uses the same `GARMIN_EMAIL` / `GARMIN_PASSWORD` from `.env` as `extract.py` — no
+additional credentials needed. Run it as its own scheduled/launchd job alongside
+`extract.py`, same pattern as the other Mac Mini automations.

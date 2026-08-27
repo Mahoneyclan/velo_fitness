@@ -3,3 +3,4 @@ garminconnect>=0.2.8
 dash>=2.14.0
 plotly>=5.18.0
 pandas>=2.0.0
+fitparse>=1.2.0
